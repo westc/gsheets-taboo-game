@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Taboo Online Game</title>
+    <!-- Bootstrap 5 CSS CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <!-- Vue 3 CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { background-color: #f8fafc; color: #1e293b; min-height: 100vh; display: flex; flex-direction: column; position: relative; font-family: system-ui, -apple-system, sans-serif; }
+        .container { max-width: 580px; margin-top: 16px; margin-bottom: 16px; }
+        .score-highlight { background-color: #e0e7ff; color: #4338ca; font-weight: bold; padding: 3px 8px; border-radius: 6px; }
+        .taboo-card { border: 3px solid #6366f1; border-radius: 20px; min-height: 280px; display: flex; flex-direction: column; justify-content: space-between; position: relative; background: #ffffff; box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.15); }
+        .target-word { font-size: 2.3rem; font-weight: 800; color: #4f46e5; text-transform: uppercase; word-break: break-word; letter-spacing: -0.025em; }
+        .forbidden-word { font-size: 1.2rem; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 0.025em; }
+        
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(4px);
+            display: flex; flex-direction: column;
+            justify-content: center; align-items: center;
+            z-index: 9999;
+        }
+        .card { border-radius: 1rem; border: none; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03); }
+        .btn { border-radius: 0.75rem; font-weight: 600; padding: 0.625rem 1.25rem; transition: all 0.2s ease; }
+        .form-control, .form-select { border-radius: 0.75rem; padding: 0.75rem 1rem; border-color: #cbd5e1; }
+        .form-control:focus, .form-select:focus { border-color: #6366f1; box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.15); }
+    </style>
+</head>
+<body>
+
+    <div id="app" class="container py-2">
+        <!-- Loading Overlay -->
+        <div v-if="isLoading" class="loading-overlay">
+            <div class="spinner-border text-primary mb-3" role="status" style="width: 3.5rem; height: 3.5rem;">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <strong class="text-primary fs-5">{{ t('loadingMessage') || 'Processing...' }}</strong>
+        </div>
+
+        <!-- Custom Dialog Modal -->
+        <div class="modal fade" :class="{ 'show d-block': dialog.show }" tabindex="-1" style="background: rgba(0,0,0,0.5);" v-if="dialog.show">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content shadow-lg border-0 rounded-4 p-2">
+                    <div class="modal-header border-0 pb-0">
+                        <h5 class="modal-title fw-bold text-primary">{{ dialog.title }}</h5>
+                        <button type="button" class="btn-close" @click="closeDialog(false)"></button>
+                    </div>
+                    <div class="modal-body">
+                        <p class="text-secondary mb-3" v-if="dialog.message">{{ dialog.message }}</p>
+                        
+                        <!-- Prompt Input -->
+                        <div v-if="dialog.type === 'prompt'" class="mb-3">
+                            <div class="input-group">
+                                <input :type="dialog.isPassword && !dialog.showPassword ? 'password' : 'text'" 
+                                       class="form-control" 
+                                       v-model="dialog.inputValue" 
+                                       @keyup.enter="closeDialog(true)"
+                                       ref="dialogInputRef"
+                                       placeholder="Enter value...">
+                                <button v-if="dialog.isPassword" class="btn btn-outline-secondary border" type="button" @click="dialog.showPassword = !dialog.showPassword">
+                                    <i :class="dialog.showPassword ? 'bi bi-eye-slash' : 'bi bi-eye'"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-0 pt-0">
+                        <button type="button" class="btn btn-light px-4" v-if="dialog.type !== 'alert'" @click="closeDialog(false)">Cancel</button>
+                        <button type="button" class="btn btn-primary px-4" @click="closeDialog(true)">OK</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Navigation / Header -->
+        <div class="d-flex justify-content-between align-items-center bg-white p-3 rounded-4 shadow-sm mb-3">
+            <h1 class="h4 fw-bold text-primary m-0"><i class="bi bi-controller me-2"></i>{{ t('gameTitle') }}</h1>
+            <button class="btn btn-light border btn-sm fw-semibold" @click="handleEditorNavClick">
+                <span v-html="screen === 'setup' ? t('editorLink') : t('backToGame')"></span>
+            </button>
+        </div>
+
+        <!-- SCREEN 1: SETUP & OPTIONS -->
+        <div v-if="screen === 'setup'" class="d-flex flex-column gap-3">
+            <div class="card p-4">
+                <h3 class="h5 fw-bold mb-3 text-dark"><i class="bi bi-sliders me-2 text-primary"></i>{{ t('options') }}</h3>
+                <div class="row g-3">
+                    <div class="col-6">
+                        <label class="form-label text-uppercase fs-7 fw-bold text-secondary">{{ t('uiLanguage') }}</label>
+                        <select class="form-select" v-model="uiLang" @change="updatePageTitle">
+                            <option value="en">English</option>
+                            <option value="es">Español</option>
+                            <option value="pt">Português</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label text-uppercase fs-7 fw-bold text-secondary">{{ t('cardDeck') }}</label>
+                        <select class="form-select" v-model="selectedDeck">
+                            <option value="" disabled>-- Select Deck --</option>
+                            <option v-for="d in uniqueDecks" :value="d.name">{{ d.name }} ({{ d.count }})</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label text-uppercase fs-7 fw-bold text-secondary">{{ t('turnDuration') }}</label>
+                        <select class="form-select" v-model.number="turnDuration">
+                            <option value="30">{{ t('sec30') }}</option>
+                            <option value="45">{{ t('sec45') }}</option>
+                            <option value="60">{{ t('sec60') }}</option>
+                            <option value="90">{{ t('sec90') }}</option>
+                            <option value="120">{{ t('sec120') }}</option>
+                        </select>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label text-uppercase fs-7 fw-bold text-secondary">{{ t('breakDuration') }}</label>
+                        <select class="form-select" v-model.number="breakDurationSetting">
+                            <option value="3">{{ t('sec3') }}</option>
+                            <option value="5">{{ t('sec5') }}</option>
+                            <option value="0">{{ t('untilContinue') }}</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check bg-light p-3 rounded-3 border">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" id="returnSkipped" v-model="returnSkipped">
+                            <label class="form-check-label fw-semibold text-dark cursor-pointer" for="returnSkipped">{{ t('returnSkipped') }}</label>
+                        </div>
+                    </div>
+                    <div class="col-12">
+                        <div class="form-check bg-light p-3 rounded-3 border">
+                            <input class="form-check-input ms-0 me-2" type="checkbox" id="returnTaboo" v-model="returnTaboo">
+                            <label class="form-check-label fw-semibold text-dark cursor-pointer" for="returnTaboo">{{ t('returnTaboo') }}</label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card p-4">
+                <h3 class="h5 fw-bold mb-3 text-dark"><i class="bi bi-people me-2 text-primary"></i>{{ t('addPlayers') }}</h3>
+                <div class="input-group mb-3">
+                    <input type="text" class="form-control" ref="playerInputRef" :placeholder="t('inputPlaceholder')" v-model="newPlayerName" @keyup.enter="addPlayer">
+                    <button class="btn btn-primary fw-bold px-4" @click="addPlayer">{{ t('addBtn') }}</button>
+                </div>
+                <ul class="list-group mb-3 shadow-sm" v-if="players.length > 0">
+                    <li v-for="(p, index) in players" :key="index" class="list-group-item d-flex justify-content-between align-items-center py-3">
+                        <span class="fw-semibold text-dark"><i class="bi bi-person-fill text-muted me-2"></i>{{ p.name }}</span>
+                        <button class="btn btn-outline-danger btn-sm px-2 py-1" tabindex="-1" @click="removePlayer(index)"><i class="bi bi-x-lg"></i></button>
+                    </li>
+                </ul>
+                <div v-else class="text-center text-muted py-3 mb-3 small bg-light rounded-3 border">{{ t('noPlayers') }}</div>
+                <button v-if="players.length > 0" class="btn btn-success w-100 py-3 fw-bold fs-5 shadow-sm" @click="startFullGame"><i class="bi bi-play-fill me-1"></i>{{ t('startBtn') }}</button>
+            </div>
+        </div>
+
+        <!-- SCREEN: CARD EDITOR -->
+        <div v-if="screen === 'editor'" class="d-flex flex-column gap-3">
+            <div class="card p-4">
+                <h3 class="h5 fw-bold mb-3 text-dark"><i class="bi bi-pencil-square me-2 text-primary"></i>{{ t('cardEditorTitle') }}</h3>
+                
+                <!-- Select or Create Deck -->
+                <div class="mb-3">
+                    <label class="form-label text-uppercase fs-7 fw-bold text-secondary">{{ t('selectDeckLabel') }}</label>
+                    <div class="d-flex gap-2">
+                        <select class="form-select" v-model="editorSelectedDeck" @change="handleDeckSelectionChange">
+                            <option value="" disabled>-- Select Deck --</option>
+                            <option value="__NEW_DECK__">+ {{ t('newDeckOption') }}</option>
+                            <option v-for="d in uniqueDecks" :value="d.name">{{ d.name }}</option>
+                        </select>
+                        <button v-if="activeEditorDeck" class="btn btn-outline-primary text-nowrap" @click="previewDeck(activeEditorDeck)">
+                            <i class="bi bi-eye me-1"></i> Preview Deck
+                        </button>
+                    </div>
+                </div>
+
+                <!-- New Deck Input Prompt -->
+                <div class="mb-3" v-if="isCreatingNewDeck">
+                    <label class="form-label small fw-bold text-primary">{{ t('newDeckNameLabel') }}</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" v-model="newDeckNameInput" :placeholder="t('newDeckPlaceholder')">
+                        <button class="btn btn-success fw-bold" @click="confirmNewDeck">{{ t('createDeckBtn') }}</button>
+                        <button class="btn btn-outline-secondary" @click="cancelNewDeck">Cancel</button>
+                    </div>
+                </div>
+
+                <div v-if="activeEditorDeck">
+                    <hr class="text-muted opacity-25">
+                    <div class="alert alert-info py-2 small mb-3 rounded-3 d-flex align-items-center">
+                        <i class="bi bi-info-circle-fill me-2 fs-5"></i>
+                        <div>{{ t('activeDeckNotice') }}: <strong>{{ activeEditorDeck }}</strong></div>
+                    </div>
+
+                    <!-- Add / Edit Card Form -->
+                    <h6 class="fw-bold text-secondary mb-3">{{ isEditing ? t('editCardTitle') : t('addNewCardTitle') }}</h6>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">{{ t('targetWordLabel') }}</label>
+                        <input type="text" class="form-control" v-model="cardForm.word" :placeholder="t('wordPlaceholder')">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">{{ t('difficultyLabel') }}</label>
+                        <select class="form-select" v-model.number="cardForm.difficulty">
+                            <option value="1">1 - Easy</option>
+                            <option value="2">2 - Medium</option>
+                            <option value="3">3 - Hard</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label small fw-bold">{{ t('tabooWordsLabel') }}</label>
+                        <div v-for="(tabooWord, idx) in cardForm.taboo" :key="idx" class="input-group mb-2">
+                            <input type="text" class="form-control" 
+                                   v-model="cardForm.taboo[idx]" 
+                                   :ref="el => { if (el) tabooInputRefs[idx] = el }"
+                                   :placeholder="t('tabooPlaceholder') + ' ' + (idx + 1)">
+                            <button class="btn btn-outline-danger" type="button" tabindex="-1" @click="cardForm.taboo.splice(idx, 1)" v-if="cardForm.taboo.length > 1">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm mt-1" @click="addTabooField" v-if="cardForm.taboo.length < 5">
+                            <i class="bi bi-plus-lg me-1"></i> Add Taboo Word
+                        </button>
+                    </div>
+
+                    <div class="d-flex gap-2 mt-4">
+                        <button class="btn btn-primary w-100 fw-bold" @click="saveCard"><i class="bi bi-check-lg me-1"></i>{{ t('saveCardBtn') }}</button>
+                        <button class="btn btn-outline-info fw-semibold" @click="previewCurrentCardForm()"><i class="bi bi-eye"></i> Preview</button>
+                        <button v-if="isEditing" class="btn btn-secondary fw-semibold" @click="resetCardForm">Cancel</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filtered Card List with Edit & Delete Buttons -->
+            <div class="card p-4" v-if="activeEditorDeck">
+                <h5 class="fw-bold mb-3 text-dark">{{ t('existingCards') }} ({{ filteredEditorCards.length }})</h5>
+                <div class="list-group shadow-sm" style="max-height: 380px; overflow-y: auto;">
+                    <div v-for="(card, index) in filteredEditorCards" :key="index" class="list-group-item d-flex justify-content-between align-items-center py-3">
+                        <div>
+                            <strong class="text-uppercase text-primary">{{ card.word }}</strong> 
+                            <span class="badge ms-1" :class="[[0, 'bg-success', 'bg-warning', 'bg-danger'][card.difficulty] || 'bg-secondary']">+{{ card.difficulty }}</span>
+                            <div class="small text-muted mt-1">Taboo: {{ card.taboo.join(', ') }}</div>
+                        </div>
+                        <div class="d-flex gap-1">
+                            <button class="btn btn-outline-info btn-sm" title="Preview Card" @click="previewCard(card)"><i class="bi bi-eye"></i></button>
+                            <button class="btn btn-outline-primary btn-sm" @click="startEditing(card)">{{ t('editBtn') }}</button>
+                            <button class="btn btn-outline-danger btn-sm" tabindex="-1" @click="deleteCard(card)">{{ t('deleteBtn') }}</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCREEN 2: TURN INTRODUCTION -->
+        <div v-if="screen === 'turn_intro'" class="card p-4 text-center">
+            <h6 class="text-muted small mb-2 text-uppercase fw-bold">{{ t('cardsRemaining') }} {{ gameDeck.length }}</h6>
+            <h2 class="fw-bold mb-2 text-dark">{{ t('upNext') }} <span class="text-primary">{{ players[currentPlayerIndex].name }}</span></h2>
+            <p class="text-muted small mb-4">{{ t('passPhone') }} <strong>{{ players[currentPlayerIndex].name }}</strong>. {{ t('tapWhenReady') }}</p>
+            <button class="btn btn-primary w-100 py-3 fw-bold fs-5 shadow-sm" @click="startTurnTimer"><i class="bi bi-play-circle-fill me-2"></i>{{ t('startTurn') }} ({{ turnDuration }}s)</button>
+        </div>
+
+        <!-- SCREEN 3: ACTIVE GAMEPLAY -->
+        <div v-if="screen === 'gameplay'" class="d-flex flex-column gap-3">
+            <div class="card p-3 d-flex flex-row justify-content-between align-items-center fw-bold text-center">
+                <div class="text-primary"><i class="bi bi-person-fill me-1"></i>{{ players[currentPlayerIndex].name }}</div>
+                <div class="text-danger fs-5"><i class="bi bi-stopwatch me-1"></i><span>{{ timeLeft }}</span>s</div>
+            </div>
+
+            <div class="card taboo-card p-4">
+                <span class="position-absolute top-0 end-0 m-3 badge bg-light text-dark border fw-bold px-3 py-2 shadow-sm">{{ difficultyText }} (+{{ currentCard.difficulty }})</span>
+                <div class="target-word text-center border-bottom pb-4 mt-4">{{ currentCard.word }}</div>
+                <ul class="list-unstyled text-center my-4 d-flex flex-column gap-2">
+                    <li v-for="w in currentCard.taboo" class="forbidden-word">{{ w }}</li>
+                </ul>
+            </div>
+
+            <div class="row g-2">
+                <div class="col-6">
+                    <button class="btn btn-danger w-100 py-3 fw-bold shadow-sm" @click="handleCardAction('taboo')"><i class="bi bi-x-circle me-1"></i>{{ t('tabooBtn') }}</button>
+                </div>
+                <div class="col-6">
+                    <button class="btn btn-warning text-white w-100 py-3 fw-bold shadow-sm" @click="handleCardAction('skip')"><i class="bi bi-skip-forward me-1"></i>{{ t('skipBtn') }}</button>
+                </div>
+                <div class="col-12">
+                    <button class="btn btn-success w-100 py-3 fw-bold fs-5 shadow-sm" @click="handleCardAction('correct')"><i class="bi bi-check-circle me-1"></i>{{ t('correctBtn') }} (+{{ currentCard.difficulty }})</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCREEN 4: INTERMEDIATE BREAK SCREEN -->
+        <div v-if="screen === 'break'" class="d-flex flex-column gap-3">
+            <div class="card p-3 d-flex flex-row justify-content-between align-items-center fw-bold text-center">
+                <div class="text-primary"><i class="bi bi-person-fill me-1"></i>{{ players[currentPlayerIndex].name }}</div>
+                <div class="text-danger fs-5"><i class="bi bi-stopwatch me-1"></i><span>{{ timeLeft }}</span>s</div>
+            </div>
+
+            <div class="card p-4 text-center">
+                <div class="small fw-bold text-secondary mb-2 text-uppercase">{{ t('verifyAction') }}</div>
+                <div class="mb-3">
+                    <span class="fs-4 fw-bold text-dark text-uppercase">{{ currentCard.word }}</span><br>
+                    <span class="badge rounded-pill mt-2 px-3 py-2 fw-bold shadow-sm" :class="actionBadgeClass">{{ actionBadgeText }}</span>
+                </div>
+                <div v-if="breakDurationSetting > 0" class="bg-light p-3 rounded-3 border small text-muted mb-3">
+                    {{ t('breakMessage') }} <strong id="break-countdown">{{ breakTimeLeft }}</strong>s...
+                </div>
+                <div class="d-flex flex-column gap-2">
+                    <button class="btn btn-success py-3 fw-bold shadow-sm" @click="proceedFromBreak"><i class="bi bi-check2 me-1"></i>{{ t('confirmActionBtn') }}</button>
+                    <button class="btn btn-outline-danger py-2 fw-semibold" @click="undoLastAction"><i class="bi bi-arrow-counterclockwise me-1"></i>{{ t('changeActionBtn') }}</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- SCREEN 5: TURN END -->
+        <div v-if="screen === 'turn_end'" class="card p-4">
+            <h2 class="text-center fw-bold mb-1 text-danger"><i class="bi bi-alarm me-2"></i>{{ t('timesUp') }}</h2>
+            <p class="text-center text-muted small mb-3">{{ t('endTurnText') }} <strong>{{ players[currentPlayerIndex].name }}</strong></p>
+            
+            <table class="table align-middle">
+                <thead>
+                    <tr class="text-secondary small text-uppercase">
+                        <th>{{ t('playerTeam') }}</th>
+                        <th>{{ t('score') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="(p, idx) in players" :key="idx">
+                        <td><strong>{{ p.name }}</strong></td>
+                        <td>
+                            {{ p.score }} 
+                            <span v-if="idx === currentPlayerIndex" class="score-highlight ms-2">
+                                {{ turnScoreEarned >= 0 ? '+' + turnScoreEarned : turnScoreEarned }}
+                            </span>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="text-center mt-3">
+                <p class="small text-muted mb-2">{{ t('passNextTo') }} <strong class="text-primary">{{ nextPlayerName }}</strong></p>
+                <button class="btn btn-primary w-100 py-3 fw-bold fs-5 shadow-sm" @click="advanceToNextPlayer">
+                    {{ t('passNextTo') }} {{ nextPlayerName }} &rarr;
+                </button>
+            </div>
+        </div>
+
+        <!-- SCREEN 6: GAME OVER -->
+        <div v-if="screen === 'game_over'" class="card p-4 text-center">
+            <h2 class="fw-bold mb-1 text-success"><i class="bi bi-trophy-fill me-2"></i>{{ t('gameOver') }}</h2>
+            <p class="text-muted small mb-3">{{ gameOverReason }}</p>
+            <table class="table align-middle text-start">
+                <thead>
+                    <tr class="text-secondary small text-uppercase">
+                        <th>{{ t('rank') }}</th>
+                        <th>{{ t('playerTeam') }}</th>
+                        <th>{{ t('score') }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr v-for="(p, idx) in sortedPlayers" :key="idx">
+                        <td><span class="badge bg-light text-dark border">#{{ idx + 1 }}</span></td>
+                        <td><strong>{{ p.name }}</strong></td>
+                        <td><span class="fw-bold text-primary">{{ p.score }}</span></td>
+                    </tr>
+                </tbody>
+            </table>
+            <button class="btn btn-primary w-100 py-3 fw-bold mt-2 shadow-sm" @click="screen = 'setup'"><i class="bi bi-arrow-repeat me-1"></i>{{ t('playAgain') }}</button>
+        </div>
+
+        <!-- PREVIEW MODAL -->
+        <div class="modal fade" :class="{ 'show d-block': previewModal.show }" tabindex="-1" style="background: rgba(0,0,0,0.6);" v-if="previewModal.show">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content shadow-lg border-0 rounded-4 p-3 bg-white">
+                    <div class="modal-header border-0 pb-0">
+                        <h5 class="modal-title fw-bold text-primary">
+                            <i class="bi bi-eye me-2"></i>{{ previewModal.title }}
+                        </h5>
+                        <button type="button" class="btn-close" @click="previewModal.show = false"></button>
+                    </div>
+                    <div class="modal-body">
+                        <!-- Single Card Preview -->
+                        <div v-if="previewModal.type === 'card'" class="taboo-card p-4 my-2">
+                            <span class="position-absolute top-0 end-0 m-3 badge bg-light text-dark border fw-bold px-3 py-2">+{{ previewModal.card.difficulty }}</span>
+                            <div class="target-word text-center border-bottom pb-4 mt-4">{{ previewModal.card.word }}</div>
+                            <ul class="list-unstyled text-center my-4 d-flex flex-column gap-2">
+                                <li v-for="w in previewModal.card.taboo" class="forbidden-word">{{ w }}</li>
+                            </ul>
+                        </div>
+
+                        <!-- Deck Simulation Preview Carousel / List -->
+                        <div v-if="previewModal.type === 'deck'">
+                            <div v-if="previewModal.cards.length === 0" class="text-center text-muted py-4">No cards in this deck yet.</div>
+                            <div v-else>
+                                <div class="d-flex justify-content-between align-items-center mb-2 text-muted small fw-bold">
+                                    <span>Card {{ previewModal.currentIndex + 1 }} of {{ previewModal.cards.length }}</span>
+                                    <span>Deck: {{ previewModal.deckName }}</span>
+                                </div>
+                                <div class="taboo-card p-4 my-2">
+                                    <span class="position-absolute top-0 end-0 m-3 badge bg-light text-dark border fw-bold px-3 py-2">+{{ previewModal.cards[previewModal.currentIndex].difficulty }}</span>
+                                    <div class="target-word text-center border-bottom pb-4 mt-4">{{ previewModal.cards[previewModal.currentIndex].word }}</div>
+                                    <ul class="list-unstyled text-center my-4 d-flex flex-column gap-2">
+                                        <li v-for="w in previewModal.cards[previewModal.currentIndex].taboo" class="forbidden-word">{{ w }}</li>
+                                    </ul>
+                                </div>
+                                <div class="d-flex justify-content-between mt-3">
+                                    <button class="btn btn-outline-secondary btn-sm" @click="previewModal.currentIndex = (previewModal.currentIndex - 1 + previewModal.cards.length) % previewModal.cards.length">
+                                        <i class="bi bi-chevron-left"></i> Previous
+                                    </button>
+                                    <button class="btn btn-outline-primary btn-sm" @click="previewModal.currentIndex = (previewModal.currentIndex + 1) % previewModal.cards.length">
+                                        Next <i class="bi bi-chevron-right"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer border-0 pt-0">
+                        <button type="button" class="btn btn-secondary w-100" @click="previewModal.show = false">Close Preview</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Vue App Logic Script -->
+    <script>
+        const { createApp, ref, computed, onMounted, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const screen = ref('setup');
+                const isLoading = ref(false);
+                const allCards = ref([]);
+                const gameDeck = ref([]);
+                const players = ref([]);
+                const newPlayerName = ref('');
+                const playerInputRef = ref(null);
+                const tabooInputRefs = ref([]);
+                const dialogInputRef = ref(null);
+                
+                const uiLang = ref('en');
+                const selectedDeck = ref('');
+                const editorSelectedDeck = ref('');
+                const isCreatingNewDeck = ref(false);
+                const newDeckNameInput = ref('');
+                const activeEditorDeck = ref('');
+
+                const editorAuthHash = ref('');
+
+                const turnDuration = ref(60);
+                const breakDurationSetting = ref(0);
+                const returnSkipped = ref(false);
+                const returnTaboo = ref(false);
+
+                // Custom Dialog State
+                const dialog = ref({
+                    show: false,
+                    type: 'alert', // 'alert', 'confirm', 'prompt'
+                    title: '',
+                    message: '',
+                    isPassword: false,
+                    showPassword: false,
+                    inputValue: '',
+                    resolve: null
+                });
+
+                // Preview Modal State
+                const previewModal = ref({
+                    show: false,
+                    type: 'card', // 'card' or 'deck'
+                    title: '',
+                    card: { word: '', difficulty: 1, taboo: [] },
+                    cards: [],
+                    currentIndex: 0,
+                    deckName: ''
+                });
+
+                // Card Editor state
+                const isEditing = ref(false);
+                const cardForm = ref({
+                    originalWord: null, 
+                    word: '',
+                    difficulty: 1,
+                    taboo: ['', '', '']
+                });
+
+                const currentPlayerIndex = ref(0);
+                const currentCard = ref(null);
+                const timeLeft = ref(60);
+                const breakTimeLeft = ref(5);
+                const turnScoreEarned = ref(0);
+                const gameOverReason = ref('');
+                const lastActionData = ref(null);
+
+                let timerInterval = null;
+                let breakInterval = null;
+
+                const translations = {
+                    en: {
+                        gameTitle: "Taboo",
+                        editorLink: "Editor &rarr;",
+                        backToGame: "&larr; Back to Game",
+                        options: "Game Options",
+                        uiLanguage: "UI Language",
+                        cardDeck: "Card Deck",
+                        turnDuration: "Turn Duration",
+                        breakDuration: "Intermediate Break",
+                        returnSkipped: "Return skipped cards to deck",
+                        returnTaboo: "Return taboo cards to deck",
+                        addPlayers: "Add Players or Teams",
+                        inputPlaceholder: "Player or Team name",
+                        addBtn: "Add",
+                        noPlayers: "No players added yet.",
+                        startBtn: "Start Game",
+                        cardEditorTitle: "Card Editor",
+                        selectDeckLabel: "Select Deck to Edit",
+                        newDeckOption: "New Deck",
+                        newDeckNameLabel: "Enter New Deck Name",
+                        newDeckPlaceholder: "e.g., Movies, Kids",
+                        createDeckBtn: "Create & Select",
+                        activeDeckNotice: "Active Editing Deck",
+                        addNewCardTitle: "Add New Card",
+                        editCardTitle: "Edit Card",
+                        targetWordLabel: "Target Word",
+                        wordPlaceholder: "e.g., COMPUTER",
+                        difficultyLabel: "Difficulty",
+                        tabooWordsLabel: "Taboo Words",
+                        tabooPlaceholder: "Taboo word",
+                        saveCardBtn: "Save Card",
+                        existingCards: "Existing Cards in Deck",
+                        editBtn: "Edit",
+                        deleteBtn: "Delete",
+                        cardsRemaining: "Cards Remaining:",
+                        upNext: "Up Next:",
+                        passPhone: "Hand phone to",
+                        tapWhenReady: "Tap when ready!",
+                        startTurn: "Start Turn",
+                        timeLabel: "Time:",
+                        tabooBtn: "Taboo! (-1)",
+                        skipBtn: "Skip (0)",
+                        correctBtn: "Correct!",
+                        timesUp: "Time's Up!",
+                        endTurnText: "End of",
+                        passNextTo: "Pass to Next Player:",
+                        gameOver: "Game Over!",
+                        rank: "Rank",
+                        playerTeam: "Player / Team",
+                        score: "Score",
+                        playAgain: "Play Again",
+                        diffEasy: "Easy",
+                        diffMed: "Medium",
+                        diffHard: "Hard",
+                        deckEmpty: "The card deck is completely empty!",
+                        allPlayed: "All cards have been played!",
+                        verifyAction: "Verify your last action:",
+                        actionCorrect: "Correct (+",
+                        actionTaboo: "Taboo! (-1)",
+                        actionSkip: "Skipped (0)",
+                        confirmActionBtn: "Confirm & Next Card",
+                        changeActionBtn: "Change / Undo Action",
+                        breakMessage: "Continuing in",
+                        sec3: "3 seconds",
+                        sec5: "5 seconds",
+                        sec30: "30 seconds",
+                        sec45: "45 seconds",
+                        sec60: "60 seconds",
+                        sec90: "90 seconds",
+                        sec120: "120 seconds",
+                        untilContinue: "Until continue",
+                        loadingMessage: "Loading\u2026"
+                    },
+                    es: {
+                        gameTitle: "Tabú",
+                        editorLink: "Editor &rarr;",
+                        backToGame: "&larr; Volver al Juego",
+                        options: "Opciones del Juego",
+                        uiLanguage: "Idioma de la interfaz",
+                        cardDeck: "Mazo de Cartas",
+                        turnDuration: "Duración del Turno",
+                        breakDuration: "Pausa Intermedia",
+                        returnSkipped: "Devolver cartas omitidas al mazo",
+                        returnTaboo: "Devolver cartas tabú al mazo",
+                        addPlayers: "Agregar Jugadores o Equipos",
+                        inputPlaceholder: "Nombre de jugador o equipo",
+                        addBtn: "Añadir",
+                        noPlayers: "No hay jugadores añadidos.",
+                        startBtn: "Comenzar Juego",
+                        cardEditorTitle: "Editor de Cartas",
+                        selectDeckLabel: "Seleccionar Mazo para Editar",
+                        newDeckOption: "Nuevo Mazo",
+                        newDeckNameLabel: "Ingresar Nombre del Nuevo Mazo",
+                        newDeckPlaceholder: "ej., Peliculas, Ninos",
+                        createDeckBtn: "Crear y Seleccionar",
+                        activeDeckNotice: "Mazo Activo en Edición",
+                        addNewCardTitle: "Agregar Nueva Carta",
+                        editCardTitle: "Editar Carta",
+                        targetWordLabel: "Palabra Objetivo",
+                        wordPlaceholder: "ej., COMPUTADORA",
+                        difficultyLabel: "Dificultad",
+                        tabooWordsLabel: "Palabras Tabú",
+                        tabooPlaceholder: "Palabra tabú",
+                        saveCardBtn: "Guardar Carta",
+                        existingCards: "Cartas Existentes en el Mazo",
+                        editBtn: "Editar",
+                        deleteBtn: "Eliminar",
+                        cardsRemaining: "Cartas Restantes:",
+                        upNext: "Siguiente:",
+                        passPhone: "Pasa el teléfono a",
+                        tapWhenReady: "¡Toca cuando estés listo!",
+                        startTurn: "Comenzar Turno",
+                        timeLabel: "Tiempo:",
+                        tabooBtn: "¡Tabú! (-1)",
+                        skipBtn: "Omitir (0)",
+                        correctBtn: "¡Correcto!",
+                        timesUp: "¡Se acabó el tiempo!",
+                        endTurnText: "Fin del turno de",
+                        passNextTo: "Pasar al siguiente jugador:",
+                        gameOver: "¡Juego Terminado!",
+                        rank: "Pos",
+                        playerTeam: "Jugador / Equipo",
+                        score: "Puntos",
+                        playAgain: "Jugar de Nuevo",
+                        diffEasy: "Fácil",
+                        diffMed: "Medio",
+                        diffHard: "Difícil",
+                        deckEmpty: "¡El mazo de cartas está completamente vacío!",
+                        allPlayed: "¡Todas las cartas han sido jugadas!",
+                        verifyAction: "Verifica tu última acción:",
+                        actionCorrect: "Correcto (+",
+                        actionTaboo: "¡Tabú! (-1)",
+                        actionSkip: "Omitido (0)",
+                        confirmActionBtn: "Confirmar y Siguiente Carta",
+                        changeActionBtn: "Cambiar / Deshacer Acción",
+                        breakMessage: "Continuando en",
+                        sec3: "3 segundos",
+                        sec5: "5 segundos",
+                        sec30: "30 segundos",
+                        sec45: "45 segundos",
+                        sec60: "60 segundos",
+                        sec90: "90 segundos",
+                        sec120: "120 segundos",
+                        untilContinue: "Hasta continuar",
+                        loadingMessage: "Cargando\u2026"
+                    },
+                    pt: {
+                        gameTitle: "Tabu",
+                        editorLink: "Editor &rarr;",
+                        backToGame: "&larr; Voltar ao Jogo",
+                        options: "Opções do Jogo",
+                        uiLanguage: "Idioma da Interface",
+                        cardDeck: "Baralho de Cartas",
+                        turnDuration: "Duração do Turno",
+                        breakDuration: "Pausa Intermediária",
+                        returnSkipped: "Retornar cartas puladas para o monte",
+                        returnTaboo: "Retornar cartas tabu para o monte",
+                        addPlayers: "Adicionar Jogadores ou Equipes",
+                        inputPlaceholder: "Nome do jogador ou equipe",
+                        addBtn: "Adicionar",
+                        noPlayers: "Nenhum jogador adicionado.",
+                        startBtn: "Iniciar Jogo",
+                        cardEditorTitle: "Editor de Cartas",
+                        selectDeckLabel: "Selecionar Baralho para Editar",
+                        newDeckOption: "Novo Baralho",
+                        newDeckNameLabel: "Digite o Nome do Novo Baralho",
+                        newDeckPlaceholder: "ex., Filmes, Infantil",
+                        createDeckBtn: "Criar & Selecionar",
+                        activeDeckNotice: "Baralho Ativo em Edição",
+                        addNewCardTitle: "Adicionar Nova Carta",
+                        editCardTitle: "Editar Carta",
+                        targetWordLabel: "Palavra Alvo",
+                        wordPlaceholder: "ex., COMPUTADOR",
+                        difficultyLabel: "Dificuldade",
+                        tabooWordsLabel: "Palavras Tabu",
+                        tabooPlaceholder: "Palavra tabu",
+                        saveCardBtn: "Salvar Carta",
+                        existingCards: "Cartas Existentes no Baralho",
+                        editBtn: "Editar",
+                        deleteBtn: "Excluir",
+                        cardsRemaining: "Cartas Restantes:",
+                        upNext: "Próximo:",
+                        passPhone: "Passe o celular para",
+                        tapWhenReady: "Toque quando estiver pronto!",
+                        startTurn: "Iniciar Turno",
+                        timeLabel: "Tempo:",
+                        tabooBtn: "Tabu! (-1)",
+                        skipBtn: "Pular (0)",
+                        correctBtn: "Correto!",
+                        timesUp: "O Tempo Acabou!",
+                        endTurnText: "Fim do turno de",
+                        passNextTo: "Passar para o próximo jogador:",
+                        gameOver: "Fim de Jogo!",
+                        rank: "Pos",
+                        playerTeam: "Jogador / Equipe",
+                        score: "Pontos",
+                        playAgain: "Jogar Novamente",
+                        diffEasy: "Fácil",
+                        diffMed: "Médio",
+                        diffHard: "Difícil",
+                        deckEmpty: "O monte de cartas está completamente vazio!",
+                        allPlayed: "Todas as cartas foram jogadas!",
+                        verifyAction: "Verifique sua última ação:",
+                        actionCorrect: "Correto (+",
+                        actionTaboo: "Tabu! (-1)",
+                        actionSkip: "Pulado (0)",
+                        confirmActionBtn: "Confirmar & Próxima Carta",
+                        changeActionBtn: "Mudar / Desfazer Ação",
+                        breakMessage: "Continuando em",
+                        sec3: "3 segundos",
+                        sec5: "5 segundos",
+                        sec30: "30 segundos",
+                        sec45: "45 segundos",
+                        sec60: "60 segundos",
+                        sec90: "90 segundos",
+                        sec120: "120 segundos",
+                        untilContinue: "Até continuar",
+                        loadingMessage: "Carregando\u2026"
+                    }
+                };
+
+                const t = (key) => translations[uiLang.value][key] || translations['en'][key];
+
+                const showAlert = (title, message) => {
+                    return new Promise((resolve) => {
+                        dialog.value = { show: true, type: 'alert', title, message, isPassword: false, showPassword: false, inputValue: '', resolve };
+                    });
+                };
+
+                const showConfirm = (title, message) => {
+                    return new Promise((resolve) => {
+                        dialog.value = { show: true, type: 'confirm', title, message, isPassword: false, showPassword: false, inputValue: '', resolve };
+                    });
+                };
+
+                const showPrompt = (title, message, isPassword = false) => {
+                    return new Promise((resolve) => {
+                        dialog.value = { show: true, type: 'prompt', title, message, isPassword, showPassword: false, inputValue: '', resolve };
+                        nextTick(() => { if (dialogInputRef.value) dialogInputRef.value.focus(); });
+                    });
+                };
+
+                const closeDialog = (result) => {
+                    const resValue = dialog.value.inputValue;
+                    const resolveFn = dialog.value.resolve;
+                    dialog.value.show = false;
+                    if (resolveFn) {
+                        if (dialog.value.type === 'prompt') {
+                            resolveFn(result ? resValue : null);
+                        } else {
+                            resolveFn(result);
+                        }
+                    }
+                };
+
+                const previewCard = (card) => {
+                    previewModal.value = {
+                        show: true,
+                        type: 'card',
+                        title: 'Card Preview',
+                        card: card,
+                        cards: [],
+                        currentIndex: 0,
+                        deckName: ''
+                    };
+                };
+
+                const previewCurrentCardForm = () => {
+                    previewModal.value = {
+                        show: true,
+                        type: 'card',
+                        title: 'Card Preview (Draft)',
+                        card: {
+                            word: cardForm.value.word || 'TARGET WORD',
+                            difficulty: cardForm.value.difficulty,
+                            taboo: cardForm.value.taboo.map(w => w.trim() || 'Taboo word')
+                        },
+                        cards: [],
+                        currentIndex: 0,
+                        deckName: ''
+                    };
+                };
+
+                const previewDeck = (deckName) => {
+                    const deckCards = allCards.value.filter(c => c.deck === deckName);
+                    previewModal.value = {
+                        show: true,
+                        type: 'deck',
+                        title: `Deck Preview: ${deckName}`,
+                        cards: deckCards,
+                        currentIndex: 0,
+                        deckName: deckName,
+                        card: { word: '', difficulty: 1, taboo: [] }
+                    };
+                };
+
+                const updatePageTitle = () => {
+                    document.title = t('gameTitle') + " Online Game";
+                };
+
+                const uniqueDecks = computed(
+                  () => Object.entries(
+                    allCards.value.reduce((counts, c) => {
+                      counts[c.deck] = (counts[c.deck] ?? 0) + 1;
+                      return counts;
+                    }, {})
+                  ).map(([name, count]) => ({name, count})).sort((a, b) => a.name < b.name ? -1 : 1)
+                );
+
+                const filteredEditorCards = computed(() => {
+                    if (!activeEditorDeck.value) return [];
+                    return allCards.value.filter(c => c.deck === activeEditorDeck.value);
+                });
+
+                const difficultyText = computed(() => {
+                    if (!currentCard.value) return '';
+                    if (currentCard.value.difficulty === 2) return t('diffMed');
+                    if (currentCard.value.difficulty === 3) return t('diffHard');
+                    return t('diffEasy');
+                });
+
+                const nextPlayerName = computed(() => {
+                    if (players.value.length === 0) return '';
+                    const nextIdx = (currentPlayerIndex.value + 1) % players.value.length;
+                    return players.value[nextIdx].name;
+                });
+
+                const sortedPlayers = computed(() => {
+                    return [...players.value].sort((a, b) => b.score - a.score);
+                });
+
+                const actionBadgeClass = computed(() => {
+                    if (!lastActionData.value) return '';
+                    if (lastActionData.value.action === 'taboo') return 'bg-danger text-white';
+                    if (lastActionData.value.action === 'skip') return 'bg-warning text-white';
+                    return 'bg-success text-white';
+                });
+
+                const actionBadgeText = computed(() => {
+                    if (!lastActionData.value) return '';
+                    if (lastActionData.value.action === 'taboo') return t('actionTaboo');
+                    if (lastActionData.value.action === 'skip') return t('actionSkip');
+                    return `${t('actionCorrect')}${currentCard.value.difficulty})`;
+                });
+
+                onMounted(() => {
+                    loadCardsData();
+                });
+
+                const loadCardsData = () => {
+                    isLoading.value = true;
+                    google.script.run
+                        .withSuccessHandler(loadedCards => {
+                            allCards.value = loadedCards;
+                            isLoading.value = false;
+                        })
+                        .withFailureHandler(err => {
+                            isLoading.value = false;
+                            showAlert("Error", "Failed to load cards.");
+                        })
+                        .getCards();
+                };
+
+                const handleEditorNavClick = async () => {
+                    if (screen.value === 'setup') {
+                        if (editorAuthHash.value) {
+                            screen.value = 'editor';
+                        } else {
+                            const pwd = await showPrompt("Editor Authentication", "Enter editor password:", true);
+                            if (pwd === null) return;
+                            isLoading.value = true;
+                            google.script.run
+                                .withSuccessHandler(hash => {
+                                    isLoading.value = false;
+                                    editorAuthHash.value = hash;
+                                    screen.value = 'editor';
+                                })
+                                .withFailureHandler(async err => {
+                                    isLoading.value = false;
+                                    await showAlert("Authentication Failed", "Authentication failed: " + err.message);
+                                })
+                                .verifyEditorPassword(pwd);
+                        }
+                    } else {
+                        screen.value = 'setup';
+                        resetCardForm();
+                        activeEditorDeck.value = '';
+                        editorSelectedDeck.value = '';
+                    }
+                };
+
+                const handleDeckSelectionChange = () => {
+                    if (editorSelectedDeck.value === '__NEW_DECK__') {
+                        isCreatingNewDeck.value = true;
+                        newDeckNameInput.value = '';
+                        activeEditorDeck.value = '';
+                    } else {
+                        isCreatingNewDeck.value = false;
+                        activeEditorDeck.value = editorSelectedDeck.value;
+                        resetCardForm();
+                    }
+                };
+
+                const confirmNewDeck = async () => {
+                    const deckName = newDeckNameInput.value.trim();
+                    if (!deckName) {
+                        await showAlert("Invalid Name", "Please enter a valid deck name.");
+                        return;
+                    }
+                    const exists = uniqueDecks.value.findIndex(d => d.name === deckName) >= 0;
+                    if (exists) {
+                        await showAlert("Deck Exists", "A deck with this name already exists.");
+                        return;
+                    }
+                    activeEditorDeck.value = deckName;
+                    editorSelectedDeck.value = deckName;
+                    isCreatingNewDeck.value = false;
+                    resetCardForm();
+                };
+
+                const cancelNewDeck = () => {
+                    isCreatingNewDeck.value = false;
+                    editorSelectedDeck.value = '';
+                    activeEditorDeck.value = '';
+                };
+
+                const addPlayer = () => {
+                    const name = newPlayerName.value.trim();
+                    if (!name) return;
+                    players.value.push({ name: name, score: 0 });
+                    newPlayerName.value = '';
+                    nextTick(() => {
+                        if (playerInputRef.value) playerInputRef.value.focus();
+                    });
+                };
+
+                const removePlayer = (index) => {
+                    players.value.splice(index, 1);
+                };
+
+                const addTabooField = () => {
+                    if (cardForm.value.taboo.length < 5) {
+                        cardForm.value.taboo.push('');
+                        nextTick(() => {
+                            const newIdx = cardForm.value.taboo.length - 1;
+                            if (tabooInputRefs.value[newIdx]) {
+                                tabooInputRefs.value[newIdx].focus();
+                            }
+                        });
+                    }
+                };
+
+                const startEditing = (card) => {
+                    isEditing.value = true;
+                    cardForm.value = {
+                        originalWord: card.word,
+                        word: card.word,
+                        difficulty: card.difficulty,
+                        taboo: [...card.taboo]
+                    };
+                };
+
+                const resetCardForm = () => {
+                    isEditing.value = false;
+                    cardForm.value = {
+                        originalWord: null,
+                        word: '',
+                        difficulty: 1,
+                        taboo: ['', '', '']
+                    };
+                };
+
+                const saveCard = async () => {
+                    const cleanWord = `${cardForm.value.word}`.trim();
+                    const cleanTaboo = cardForm.value.taboo.map(w => `${w}`.trim()).filter(w => w.length > 0);
+
+                    if (!cleanWord) {
+                        await showAlert("Missing Word", "Please enter a target word.");
+                        return;
+                    }
+
+                    const duplicateWord = allCards.value.some(c => 
+                        c.deck === activeEditorDeck.value && 
+                        `${c.word}`.toLowerCase() === cleanWord.toLowerCase() &&
+                        (!isEditing.value || !`${cardForm.value.originalWord}` || `${c.word}`.toLowerCase() !== `${cardForm.value.originalWord}`.toLowerCase())
+                    );
+
+                    if (duplicateWord) {
+                        await showAlert("Duplicate Word", "This target word already exists in this deck.");
+                        return;
+                    }
+
+                    const tabooLowerSet = new Set();
+                    for (let w of cleanTaboo) {
+                        const lower = w.toLowerCase();
+                        if (tabooLowerSet.has(lower)) {
+                            await showAlert("Duplicate Taboo", "Each taboo word must be unique.");
+                            return;
+                        }
+                        tabooLowerSet.add(lower);
+                    }
+
+                    const cardPayload = {
+                        originalWord: cardForm.value.originalWord,
+                        word: cleanWord,
+                        deck: activeEditorDeck.value,
+                        difficulty: cardForm.value.difficulty,
+                        taboo: cleanTaboo
+                    };
+
+                    isLoading.value = true;
+                    google.script.run
+                        .withSuccessHandler(() => {
+                            loadCardsData();
+                            resetCardForm();
+                        })
+                        .withFailureHandler(async err => {
+                            isLoading.value = false;
+                            await showAlert("Error", "Failed to save card: " + err.message);
+                            editorAuthHash.value = '';
+                            screen.value = 'setup';
+                        })
+                        .saveCard(cardPayload, editorAuthHash.value);
+                };
+
+                const deleteCard = async (card) => {
+                    const cardWord = `${card.word}`;
+                    const confirmed = await showConfirm("Delete Card", `Are you sure you want to delete the card "${cardWord.toUpperCase()}"?`);
+                    if (!confirmed) return;
+
+                    isLoading.value = true;
+                    google.script.run
+                        .withSuccessHandler(() => {
+                            loadCardsData();
+                            if (isEditing.value && cardForm.value.originalWord === cardWord) {
+                                resetCardForm();
+                            }
+                        })
+                        .withFailureHandler(async err => {
+                            isLoading.value = false;
+                            await showAlert("Error", "Failed to delete card: " + err.message);
+                            editorAuthHash.value = '';
+                            screen.value = 'setup';
+                        })
+                        .deleteCard(card.word, card.deck, editorAuthHash.value);
+                };
+
+                const startFullGame = async () => {
+                    if (!selectedDeck.value) {
+                        await showAlert("Select Deck", "Please select a card deck to play.");
+                        return;
+                    }
+
+                    const filtered = allCards.value.filter(c => c.deck === selectedDeck.value);
+                    if (filtered.length === 0) {
+                        await showAlert("Empty Deck", "No cards found for this deck!");
+                        return;
+                    }
+                    gameDeck.value = [...filtered].sort(() => Math.random() - 0.5);
+                    players.value.forEach(p => p.score = 0);
+                    currentPlayerIndex.value = 0;
+                    turnScoreEarned.value = 0;
+                    screen.value = 'turn_intro';
+                };
+
+                const startTurnTimer = () => {
+                    if (gameDeck.value.length === 0) {
+                        triggerGameOver(t('allPlayed'));
+                        return;
+                    }
+                    currentCard.value = gameDeck.value.pop();
+                    timeLeft.value = turnDuration.value;
+                    screen.value = 'gameplay';
+
+                    timerInterval = setInterval(() => {
+                        timeLeft.value--;
+                        if (timeLeft.value <= 0) {
+                            endTurn();
+                        }
+                    }, 1000);
+                };
+
+                const handleCardAction = (action) => {
+                    clearInterval(timerInterval);
+                    let scoreChange = 0;
+
+                    if (action === 'correct') {
+                        scoreChange = currentCard.value.difficulty;
+                        players.value[currentPlayerIndex.value].score += scoreChange;
+                        turnScoreEarned.value += scoreChange;
+                    } else if (action === 'taboo') {
+                        scoreChange = -1;
+                        players.value[currentPlayerIndex.value].score += scoreChange;
+                        turnScoreEarned.value += scoreChange;
+                        if (returnTaboo.value) gameDeck.value.unshift(currentCard.value);
+                    } else if (action === 'skip') {
+                        if (returnSkipped.value) gameDeck.value.unshift(currentCard.value);
+                    }
+
+                    lastActionData.value = {
+                        card: currentCard.value,
+                        action: action,
+                        scoreChange: scoreChange,
+                        playerIndex: currentPlayerIndex.value,
+                        returnedCard: (action === 'skip' && returnSkipped.value) || (action === 'taboo' && returnTaboo.value)
+                    };
+
+                    breakTimeLeft.value = breakDurationSetting.value;
+                    screen.value = 'break';
+
+                    if (breakDurationSetting.value > 0) {
+                        breakInterval = setInterval(() => {
+                            breakTimeLeft.value--;
+                            if (breakTimeLeft.value <= 0) {
+                                clearInterval(breakInterval);
+                                resumeTurnAfterBreak();
+                            }
+                        }, 1000);
+                    }
+                };
+
+                const proceedFromBreak = () => {
+                    clearInterval(breakInterval);
+                    resumeTurnAfterBreak();
+                };
+
+                const undoLastAction = () => {
+                    if (!lastActionData.value) return;
+                    clearInterval(breakInterval);
+
+                    players.value[lastActionData.value.playerIndex].score -= lastActionData.value.scoreChange;
+                    turnScoreEarned.value -= lastActionData.value.scoreChange;
+
+                    if (lastActionData.value.returnedCard) {
+                        gameDeck.value.shift();
+                    }
+
+                    currentCard.value = lastActionData.value.card;
+                    lastActionData.value = null;
+
+                    screen.value = 'gameplay';
+                    timerInterval = setInterval(() => {
+                        timeLeft.value--;
+                        if (timeLeft.value <= 0) endTurn();
+                    }, 1000);
+                };
+
+                const resumeTurnAfterBreak = () => {
+                    if (gameDeck.value.length === 0) {
+                        triggerGameOver(t('deckEmpty'));
+                        return;
+                    }
+                    currentCard.value = gameDeck.value.pop();
+                    screen.value = 'gameplay';
+                    timerInterval = setInterval(() => {
+                        timeLeft.value--;
+                        if (timeLeft.value <= 0) endTurn();
+                    }, 1000);
+                };
+
+                const endTurn = () => {
+                    clearInterval(timerInterval);
+                    clearInterval(breakInterval);
+                    gameDeck.value.unshift(currentCard.value);
+                    if (gameDeck.value.length === 0) {
+                        triggerGameOver(t('allPlayed'));
+                        return;
+                    }
+                    screen.value = 'turn_end';
+                };
+
+                const advanceToNextPlayer = () => {
+                    currentPlayerIndex.value = (currentPlayerIndex.value + 1) % players.value.length;
+                    turnScoreEarned.value = 0;
+                    screen.value = 'turn_intro';
+                };
+
+                const triggerGameOver = (reason) => {
+                    clearInterval(timerInterval);
+                    clearInterval(breakInterval);
+                    gameOverReason.value = reason;
+                    screen.value = 'game_over';
+                };
+
+                return {
+                    screen, isLoading, allCards, gameDeck, players, newPlayerName, playerInputRef, tabooInputRefs, dialogInputRef, uiLang, selectedDeck,
+                    editorSelectedDeck, isCreatingNewDeck, newDeckNameInput, activeEditorDeck,
+                    turnDuration, breakDurationSetting, returnSkipped, returnTaboo,
+                    dialog, previewModal,
+                    isEditing, cardForm, currentPlayerIndex, currentCard, timeLeft, breakTimeLeft, 
+                    turnScoreEarned, gameOverReason, uniqueDecks, filteredEditorCards, difficultyText, 
+                    nextPlayerName, sortedPlayers, actionBadgeClass, actionBadgeText, t, updatePageTitle, 
+                    showAlert, showConfirm, showPrompt, closeDialog, previewCard, previewCurrentCardForm, previewDeck,
+                    handleEditorNavClick, handleDeckSelectionChange, confirmNewDeck, cancelNewDeck, addPlayer, 
+                    removePlayer, addTabooField, startEditing, resetCardForm, saveCard, deleteCard, startFullGame, 
+                    startTurnTimer, handleCardAction, proceedFromBreak, undoLastAction, advanceToNextPlayer
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
