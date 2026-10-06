@@ -1,6 +1,6 @@
 // Offline support: the app shell and CDN libraries are cached; card data is cached by the app itself.
 // Bump VERSION whenever you deploy changes so phones pick up the new files.
-const VERSION = 'taboo-v4';
+const VERSION = 'taboo-v5';
 
 const APP_SHELL = [
     './',
