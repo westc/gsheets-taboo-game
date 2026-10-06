@@ -1,6 +1,6 @@
 // Offline support: the app shell and CDN libraries are cached; card data is cached by the app itself.
 // Bump VERSION whenever you deploy changes so phones pick up the new files.
-const VERSION = 'taboo-v5';
+const VERSION = 'taboo-v6';
 
 const APP_SHELL = [
     './',
@@ -25,8 +25,9 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
     event.waitUntil(
+        // Every app on westc.github.io shares one cache store (e.g. rv-notes), so only remove our own old caches.
         caches.keys()
-            .then(keys => Promise.all(keys.filter(k => k !== VERSION).map(k => caches.delete(k))))
+            .then(keys => Promise.all(keys.filter(k => k.startsWith('taboo-') && k !== VERSION).map(k => caches.delete(k))))
             .then(() => self.clients.claim())
     );
 });
