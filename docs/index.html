@@ -264,6 +264,10 @@
                         <span>{{ t('returnTaboo') }}</span>
                         <input type="checkbox" v-model="settings.returnTaboo"><span class="switch"></span>
                     </label>
+                    <label class="toggle">
+                        <span><i class="bi bi-volume-up"></i> {{ t('soundEffects') }}</span>
+                        <input type="checkbox" v-model="settings.sound" @change="previewSound"><span class="switch"></span>
+                    </label>
                 </section>
 
                 <section class="panel">

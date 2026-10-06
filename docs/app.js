@@ -28,6 +28,7 @@
             untilContinue: "Until tap",
             returnSkipped: "Return skipped cards to deck",
             returnTaboo: "Return taboo cards to deck",
+            soundEffects: "Countdown beeps and buzzer",
             rulesSummaryTurn: "{s}s turns",
             rulesSummaryPause: "{s}s pause",
             rulesSummaryTap: "tap to continue",
@@ -141,6 +142,7 @@
             untilContinue: "Hasta tocar",
             returnSkipped: "Devolver cartas omitidas al mazo",
             returnTaboo: "Devolver cartas tabú al mazo",
+            soundEffects: "Pitidos de cuenta regresiva y timbre",
             rulesSummaryTurn: "Turnos de {s}s",
             rulesSummaryPause: "pausa de {s}s",
             rulesSummaryTap: "tocar para seguir",
@@ -254,6 +256,7 @@
             untilContinue: "Até tocar",
             returnSkipped: "Retornar cartas puladas ao monte",
             returnTaboo: "Retornar cartas tabu ao monte",
+            soundEffects: "Bipes de contagem regressiva e buzina",
             rulesSummaryTurn: "Turnos de {s}s",
             rulesSummaryPause: "pausa de {s}s",
             rulesSummaryTap: "tocar para seguir",
@@ -391,6 +394,45 @@
         if (navigator.vibrate) navigator.vibrate(pattern);
     }
 
+    // Sounds are synthesized with Web Audio, so there are no files to download or cache.
+    const sounds = (() => {
+        let ctx = null;
+        const context = () => {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (!ctx && AudioCtx) ctx = new AudioCtx();
+            return ctx;
+        };
+        const tone = (freq, start, duration, type = 'sine', volume = 0.3) => {
+            const c = context();
+            if (!c) return;
+            const t0 = c.currentTime + start;
+            const osc = c.createOscillator();
+            const gain = c.createGain();
+            osc.type = type;
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, t0);
+            gain.gain.exponentialRampToValueAtTime(volume, t0 + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+            osc.connect(gain).connect(c.destination);
+            osc.start(t0);
+            osc.stop(t0 + duration + 0.05);
+        };
+        return {
+            // Browsers (iOS especially) only let audio start during a tap, so call this from tap handlers.
+            unlock() {
+                const c = context();
+                if (c && c.state !== 'running') c.resume();
+                tone(440, 0, 0.01, 'sine', 0.0001);
+            },
+            warning() { tone(880, 0, 0.3); },
+            countdown(isLast) { tone(isLast ? 1320 : 880, 0, isLast ? 0.35 : 0.15); },
+            buzzer() {
+                tone(146, 0, 0.9, 'sawtooth', 0.2);
+                tone(151, 0, 0.9, 'sawtooth', 0.2);
+            }
+        };
+    })();
+
     class ApiError extends Error {
         constructor(message, code) {
             super(message);
@@ -447,7 +489,8 @@
                 turnDuration: 60,
                 breakDuration: 0,
                 returnSkipped: false,
-                returnTaboo: false
+                returnTaboo: false,
+                sound: true
             }, load(STORAGE.settings, {})));
 
             const players = ref(load(STORAGE.players, []));
@@ -482,6 +525,7 @@
 
             let turnDeadline = 0;
             let turnRemainingMs = 0;
+            let lastBeepSecond = null;
             let turnTicker = null;
             let breakTicker = null;
             let wakeLock = null;
@@ -847,8 +891,15 @@
             // The turn clock counts down from a deadline so it stays accurate if the phone lags.
             const tickTurn = () => {
                 const ms = Math.max(0, turnDeadline - Date.now());
-                timeLeft.value = Math.ceil(ms / 1000);
+                const seconds = Math.ceil(ms / 1000);
+                timeLeft.value = seconds;
                 timeFraction.value = ms / (settings.turnDuration * 1000);
+                // Beep once as the clock reaches 15, then 5, 4, 3, 2, 1. lastBeepSecond stops a
+                // repeat when the clock resumes after a pause on the same second.
+                if (seconds !== lastBeepSecond && (seconds === 15 || (seconds >= 1 && seconds <= 5))) {
+                    lastBeepSecond = seconds;
+                    if (settings.sound) seconds === 15 ? sounds.warning() : sounds.countdown(seconds === 1);
+                }
                 if (ms <= 0) endTurn();
             };
             const runTurnClock = (ms) => {
@@ -890,7 +941,16 @@
                 return true;
             };
 
+            const unlockSound = () => { if (settings.sound) sounds.unlock(); };
+            const previewSound = () => {
+                if (!settings.sound) return;
+                sounds.unlock();
+                sounds.countdown(false);
+            };
+
             const startTurn = () => {
+                unlockSound();
+                lastBeepSecond = null;
                 turnHistory.value = [];
                 if (!drawCard()) return;
                 screen.value = 'gameplay';
@@ -898,6 +958,7 @@
             };
 
             const handleCardAction = (action) => {
+                unlockSound();
                 pauseTurnClock();
                 const card = currentCard.value;
                 let scoreChange = 0;
@@ -965,6 +1026,7 @@
 
             const endTurn = (cardOnScreen = true) => {
                 stopClocks();
+                if (settings.sound) sounds.buzzer();
                 vibrate([200, 100, 200]);
                 if (cardOnScreen) {
                     // The card on screen wasn't finished, so it goes back to the bottom of the deck.
@@ -1051,7 +1113,7 @@
                 turnScoreEarned, turnHistory, gameOverReason, lastAction, actionText, resultText, isHidden, nextPlayerName, sortedPlayers,
                 canStart, startHint, rulesSummary,
                 t, difficultyName, formatDelta, initials,
-                loadCards, addPlayer, removePlayer, movePlayer,
+                loadCards, addPlayer, removePlayer, movePlayer, previewSound,
                 createDeck, openCard, closeCardSheet, addTabooField, saveCard, deleteCard,
                 previewDraft, previewDeck, stepPreview, onSwipeStart, onSwipeEnd,
                 startGame, startTurn, handleCardAction, proceedFromBreak, undoLastAction,
