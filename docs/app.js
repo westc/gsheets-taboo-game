@@ -111,6 +111,11 @@
             actionCorrect: "Correct (+{n})",
             actionTaboo: "Taboo! (−1)",
             actionSkip: "Skipped (0)",
+            actionUnfinished: "Time ran out",
+            turnCards: "Cards this turn",
+            lastTurnCards: "Last turn",
+            hiddenCard: "Hidden card",
+            backInDeck: "Back in the deck",
             confirmActionBtn: "Next card",
             changeActionBtn: "Undo",
             breakMessage: "Continuing in",
@@ -219,6 +224,11 @@
             actionCorrect: "Correcto (+{n})",
             actionTaboo: "¡Tabú! (−1)",
             actionSkip: "Omitida (0)",
+            actionUnfinished: "Se acabó el tiempo",
+            turnCards: "Cartas de este turno",
+            lastTurnCards: "Último turno",
+            hiddenCard: "Carta oculta",
+            backInDeck: "Volvió al mazo",
             confirmActionBtn: "Siguiente carta",
             changeActionBtn: "Deshacer",
             breakMessage: "Continuando en",
@@ -327,6 +337,11 @@
             actionCorrect: "Correto (+{n})",
             actionTaboo: "Tabu! (−1)",
             actionSkip: "Pulada (0)",
+            actionUnfinished: "Tempo esgotado",
+            turnCards: "Cartas deste turno",
+            lastTurnCards: "Último turno",
+            hiddenCard: "Carta oculta",
+            backInDeck: "Voltou ao monte",
             confirmActionBtn: "Próxima carta",
             changeActionBtn: "Desfazer",
             breakMessage: "Continuando em",
@@ -460,8 +475,10 @@
             const timeFraction = ref(1);
             const breakTimeLeft = ref(0);
             const turnScoreEarned = ref(0);
+            // Every card seen this turn: { card, action, scoreChange, playerIndex, returned }.
+            // `returned` cards went back into the deck, so their words stay hidden until the game ends.
+            const turnHistory = ref([]);
             const gameOverReason = ref('');
-            const lastAction = ref(null);
 
             let turnDeadline = 0;
             let turnRemainingMs = 0;
@@ -803,12 +820,16 @@
                 return players.value[(currentPlayerIndex.value + 1) % players.value.length].name;
             });
             const sortedPlayers = computed(() => [...players.value].sort((a, b) => b.score - a.score));
-            const actionText = computed(() => {
-                if (!lastAction.value) return '';
-                if (lastAction.value.action === 'taboo') return t('actionTaboo');
-                if (lastAction.value.action === 'skip') return t('actionSkip');
-                return t('actionCorrect', { n: lastAction.value.card.difficulty });
-            });
+            const resultText = (entry) => {
+                if (!entry) return '';
+                if (entry.action === 'taboo') return t('actionTaboo');
+                if (entry.action === 'skip') return t('actionSkip');
+                if (entry.action === 'unfinished') return t('actionUnfinished');
+                return t('actionCorrect', { n: entry.card.difficulty });
+            };
+            const lastAction = computed(() => turnHistory.value[turnHistory.value.length - 1] || null);
+            const actionText = computed(() => resultText(lastAction.value));
+            const isHidden = (entry) => entry.returned && screen.value !== 'game_over';
 
             const requestWakeLock = async () => {
                 try {
@@ -855,7 +876,7 @@
                 players.value.forEach(p => { p.score = 0; });
                 currentPlayerIndex.value = 0;
                 turnScoreEarned.value = 0;
-                lastAction.value = null;
+                turnHistory.value = [];
                 screen.value = 'turn_intro';
                 requestWakeLock();
             };
@@ -870,6 +891,7 @@
             };
 
             const startTurn = () => {
+                turnHistory.value = [];
                 if (!drawCard()) return;
                 screen.value = 'gameplay';
                 runTurnClock(settings.turnDuration * 1000);
@@ -896,7 +918,7 @@
                 turnScoreEarned.value += scoreChange;
                 if (returnedCard) gameDeck.value.unshift(card);
 
-                lastAction.value = { card, action, scoreChange, playerIndex: currentPlayerIndex.value, returnedCard };
+                turnHistory.value.push({ card, action, scoreChange, playerIndex: currentPlayerIndex.value, returned: returnedCard });
                 screen.value = 'break';
 
                 if (settings.breakDuration > 0) {
@@ -917,6 +939,11 @@
                     triggerGameOver(t('deckEmpty'));
                     return;
                 }
+                // No point drawing a card nobody has time to try.
+                if (turnRemainingMs < 500) {
+                    endTurn(false);
+                    return;
+                }
                 drawCard();
                 screen.value = 'gameplay';
                 runTurnClock(turnRemainingMs);
@@ -924,26 +951,31 @@
 
             const undoLastAction = () => {
                 const last = lastAction.value;
-                if (!last) return;
+                if (screen.value !== 'break' || !last) return;
                 clearInterval(breakTicker);
                 breakTicker = null;
                 players.value[last.playerIndex].score -= last.scoreChange;
                 turnScoreEarned.value -= last.scoreChange;
-                if (last.returnedCard) gameDeck.value.shift();
+                if (last.returned) gameDeck.value.shift();
+                turnHistory.value.pop();
                 currentCard.value = last.card;
-                lastAction.value = null;
                 screen.value = 'gameplay';
                 runTurnClock(turnRemainingMs);
             };
 
-            const endTurn = () => {
+            const endTurn = (cardOnScreen = true) => {
                 stopClocks();
                 vibrate([200, 100, 200]);
-                // The card on screen wasn't finished, so it goes back to the bottom of the deck.
-                gameDeck.value.unshift(currentCard.value);
+                if (cardOnScreen) {
+                    // The card on screen wasn't finished, so it goes back to the bottom of the deck.
+                    gameDeck.value.unshift(currentCard.value);
+                    turnHistory.value.push({ card: currentCard.value, action: 'unfinished', scoreChange: 0, playerIndex: currentPlayerIndex.value, returned: true });
+                }
                 screen.value = 'turn_end';
             };
 
+            // The turn history is kept until the next turn starts, so "End game" on the
+            // next player's intro screen still shows the last turn's cards.
             const advanceToNextPlayer = () => {
                 currentPlayerIndex.value = (currentPlayerIndex.value + 1) % players.value.length;
                 turnScoreEarned.value = 0;
@@ -1016,7 +1048,7 @@
                 editorDeck, editorDecks, deckCards, editorCards, searchQuery, tabooInputRefs, cardSheet, preview, previewCard,
                 dialog, dialogInputRef, closeDialog,
                 gameDeck, currentPlayerIndex, currentPlayer, currentCard, timeLeft, timeFraction, breakTimeLeft,
-                turnScoreEarned, gameOverReason, lastAction, actionText, nextPlayerName, sortedPlayers,
+                turnScoreEarned, turnHistory, gameOverReason, lastAction, actionText, resultText, isHidden, nextPlayerName, sortedPlayers,
                 canStart, startHint, rulesSummary,
                 t, difficultyName, formatDelta, initials,
                 loadCards, addPlayer, removePlayer, movePlayer,

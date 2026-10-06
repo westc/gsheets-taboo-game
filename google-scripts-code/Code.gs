@@ -151,7 +151,7 @@ function getEditorsSheet_() {
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, 4).setFontWeight('bold');
     var me = Session.getEffectiveUser().getEmail();
-    if (me) sheet.appendRow([me.toLowerCase(), 'Owner', me.toLowerCase(), new Date()]);
+    if (me) sheet.appendRow([asText_(me.toLowerCase()), 'Owner', asText_(me.toLowerCase()), new Date()]);
   }
   return sheet;
 }
@@ -212,7 +212,7 @@ function adminAddEditor(email, name) {
   if (isEditor_(email)) throw new Error(email + ' is already an editor.');
 
   var addedBy = Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail();
-  getEditorsSheet_().appendRow([email, String(name || '').trim(), addedBy, new Date()]);
+  getEditorsSheet_().appendRow([asText_(email), asText_(name || ''), asText_(addedBy), new Date()]);
   return listEditors_();
 }
 
@@ -282,7 +282,7 @@ function getCards_() {
     var difficulty = parseInt(data[i][2]) || 1;
     var deck = String(data[i][3] || 'Standard');
 
-    if (word) {
+    if (String(word).trim() !== '') {
       var tabooList = tabooStr ? String(tabooStr).split(',').map(function(s) { return s.trim(); }).filter(Boolean) : [];
       cards.push({
         word: String(word),
@@ -305,10 +305,13 @@ function findCardRow_(data, word, deck) {
   return -1;
 }
 
-/** Stops user text such as "=SUM(...)" from being treated as a formula. */
+/**
+ * Stores user text exactly as typed. Without the leading apostrophe, Sheets reads values
+ * the way it reads typing: "=SUM(1)" becomes a formula, "FALSE" a boolean, "007" the
+ * number 7 and "3/4" a date. The apostrophe is not part of the stored value.
+ */
 function asText_(value) {
-  value = String(value).trim();
-  return /^[=+\-@]/.test(value) ? "'" + value : value;
+  return "'" + String(value).trim();
 }
 
 function deleteCard_(word, deck) {
@@ -350,11 +353,16 @@ function saveCard_(card, editorEmail) {
       throw apiError_('DUPLICATE', '"' + word + '" already exists in the ' + deck + ' deck.');
     }
 
-    if (sheet.getRange(1, 5).getValue() === '') {
-      sheet.getRange(1, 5, 1, 2).setValues([['Updated By', 'Updated At']]);
+    var rowValues = [asText_(word), asText_(taboo.join(', ')), difficulty, asText_(deck)];
+
+    // Record who changed the card in columns E/F, unless those columns already hold something else.
+    var auditHeader = sheet.getRange(1, 5, 1, 2).getValues()[0];
+    var auditFree = auditHeader[0] === '' && auditHeader[1] === '';
+    if (auditFree) sheet.getRange(1, 5, 1, 2).setValues([['Updated By', 'Updated At']]);
+    if (auditFree || (auditHeader[0] === 'Updated By' && auditHeader[1] === 'Updated At')) {
+      rowValues.push(asText_(editorEmail), new Date());
     }
 
-    var rowValues = [asText_(word), asText_(taboo.join(', ')), difficulty, asText_(deck), editorEmail, new Date()];
     if (targetRow > 0) {
       sheet.getRange(targetRow, 1, 1, rowValues.length).setValues([rowValues]);
     } else {

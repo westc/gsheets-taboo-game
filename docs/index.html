@@ -71,37 +71,55 @@
             </div>
         </template>
 
-        <!-- Turn end -->
-        <div v-if="screen === 'turn_end'" class="game-center">
-            <div class="big-icon text-danger"><i class="bi bi-alarm"></i></div>
-            <h1 class="game-title">{{ t('timesUp') }}</h1>
-            <p class="muted">{{ t('endTurnText') }} <strong>{{ currentPlayer.name }}</strong> · {{ formatDelta(turnScoreEarned) }}</p>
-            <ol class="scoreboard">
-                <li v-for="(p, idx) in players" :key="idx" :class="{ 'is-current': idx === currentPlayerIndex }">
-                    <span class="sb-name">{{ p.name }}</span>
-                    <span v-if="idx === currentPlayerIndex" class="sb-delta">{{ formatDelta(turnScoreEarned) }}</span>
-                    <span class="sb-score">{{ p.score }}</span>
-                </li>
-            </ol>
-            <div class="game-actions">
+        <!-- Turn end + game over: scores, then the cards from the (last) turn -->
+        <div v-if="screen === 'turn_end' || screen === 'game_over'" class="game-center">
+            <template v-if="screen === 'turn_end'">
+                <div class="big-icon text-danger"><i class="bi bi-alarm"></i></div>
+                <h1 class="game-title">{{ t('timesUp') }}</h1>
+                <p class="muted">{{ t('endTurnText') }} <strong>{{ currentPlayer.name }}</strong> · {{ formatDelta(turnScoreEarned) }}</p>
+                <ol class="scoreboard">
+                    <li v-for="(p, idx) in players" :key="idx" :class="{ 'is-current': idx === currentPlayerIndex }">
+                        <span class="sb-name">{{ p.name }}</span>
+                        <span v-if="idx === currentPlayerIndex" class="sb-delta">{{ formatDelta(turnScoreEarned) }}</span>
+                        <span class="sb-score">{{ p.score }}</span>
+                    </li>
+                </ol>
+            </template>
+            <template v-else>
+                <div class="big-icon text-warning"><i class="bi bi-trophy-fill"></i></div>
+                <h1 class="game-title">{{ t('gameOver') }}</h1>
+                <p class="muted">{{ gameOverReason }}</p>
+                <ol class="scoreboard ranked">
+                    <li v-for="(p, idx) in sortedPlayers" :key="idx" :class="{ 'is-winner': idx === 0 }">
+                        <span class="sb-rank">#{{ idx + 1 }}</span>
+                        <span class="sb-name">{{ p.name }}</span>
+                        <span class="sb-score">{{ p.score }}</span>
+                    </li>
+                </ol>
+            </template>
+
+            <section v-if="turnHistory.length" class="turn-review">
+                <h2 class="turn-review-title">{{ t(screen === 'turn_end' ? 'turnCards' : 'lastTurnCards') }} <span>{{ turnHistory.length }}</span></h2>
+                <ol class="turn-review-list">
+                    <li v-for="(entry, i) in turnHistory" :key="i" :class="['is-' + entry.action, { 'is-hidden': isHidden(entry) }]">
+                        <div class="tr-main" v-if="isHidden(entry)">
+                            <div class="tr-word"><i class="bi bi-eye-slash"></i> {{ t('hiddenCard') }}</div>
+                            <div class="tr-taboo">{{ t('backInDeck') }}</div>
+                        </div>
+                        <div class="tr-main" v-else>
+                            <div class="tr-word">{{ entry.card.word }}</div>
+                            <div class="tr-taboo">{{ entry.card.taboo.join(' · ') }}</div>
+                        </div>
+                        <span class="tr-result">{{ resultText(entry) }}</span>
+                    </li>
+                </ol>
+            </section>
+
+            <div class="game-actions" v-if="screen === 'turn_end'">
                 <button class="btn btn-primary btn-xl" @click="advanceToNextPlayer">{{ t('passTo', { name: nextPlayerName }) }} <i class="bi bi-arrow-right"></i></button>
                 <button class="btn btn-link" @click="confirmEndGame">{{ t('endGame') }}</button>
             </div>
-        </div>
-
-        <!-- Game over -->
-        <div v-if="screen === 'game_over'" class="game-center">
-            <div class="big-icon text-warning"><i class="bi bi-trophy-fill"></i></div>
-            <h1 class="game-title">{{ t('gameOver') }}</h1>
-            <p class="muted">{{ gameOverReason }}</p>
-            <ol class="scoreboard ranked">
-                <li v-for="(p, idx) in sortedPlayers" :key="idx" :class="{ 'is-winner': idx === 0 }">
-                    <span class="sb-rank">#{{ idx + 1 }}</span>
-                    <span class="sb-name">{{ p.name }}</span>
-                    <span class="sb-score">{{ p.score }}</span>
-                </li>
-            </ol>
-            <div class="game-actions">
+            <div class="game-actions" v-else>
                 <button class="btn btn-primary btn-xl" @click="startGame"><i class="bi bi-arrow-repeat"></i> {{ t('playAgain') }}</button>
                 <button class="btn btn-link" @click="exitGame">{{ t('backToMenu') }}</button>
             </div>

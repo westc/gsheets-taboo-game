@@ -36,13 +36,16 @@
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 [v-cloak] { display: none; }
-html, body { margin: 0; background: var(--bg); color: var(--text); }
+html, body {
+    margin: 0; background: var(--bg); color: var(--text);
+    /* Stop pull-to-refresh / bounce from reloading the page (and losing a game) on an accidental swipe. */
+    overscroll-behavior-y: none;
+}
 body {
     font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     font-size: 16px;
     line-height: 1.4;
     min-height: 100dvh;
-    overscroll-behavior-y: none;
 }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -364,6 +367,42 @@ select.input {
 .sb-delta { font-weight: 700; color: var(--primary); font-size: .9rem; }
 .sb-score { font-weight: 900; font-size: 1.2rem; min-width: 36px; text-align: right; }
 .is-winner .sb-name::after { content: ' 🏆'; }
+
+/* Cards played during the turn (turn end + game over) */
+.turn-review { width: 100%; margin-top: 18px; text-align: left; }
+.turn-review-title {
+    display: flex; align-items: center; gap: 8px; margin: 0 0 8px 4px;
+    font-size: .8rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted);
+}
+.turn-review-title span { padding: 1px 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+.turn-review-list {
+    list-style: none; margin: 0; padding: 0;
+    background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden;
+}
+.turn-review-list li {
+    --result: var(--muted);
+    display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    border-top: 1px solid var(--border); border-left: 4px solid var(--result);
+}
+.turn-review-list li:first-child { border-top: 0; }
+.turn-review-list li.is-correct { --result: var(--success); }
+.turn-review-list li.is-taboo { --result: var(--danger); }
+.turn-review-list li.is-skip { --result: var(--warning); }
+.tr-main { flex: 1; min-width: 0; }
+.tr-word { font-weight: 800; text-transform: uppercase; }
+.turn-review-list li.is-hidden .tr-word { text-transform: none; font-weight: 700; color: var(--muted); font-style: italic; }
+.tr-taboo { font-size: .8rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr-result {
+    flex: none; padding: 3px 10px; border-radius: 999px; font-size: .8rem; font-weight: 700;
+    color: var(--result); background: color-mix(in srgb, var(--result) 14%, transparent);
+}
+
+/* Keep the next-step buttons reachable when the card list is long */
+.game--turn_end .game-actions, .game--game_over .game-actions {
+    position: sticky; bottom: 0; z-index: 2;
+    padding: 16px 0 calc(var(--safe-bottom) + 4px); margin-bottom: calc(-1 * var(--safe-bottom));
+    background: linear-gradient(to top, var(--bg) 75%, transparent);
+}
 
 /* ---------- Bottom sheet ---------- */
 .sheet-backdrop {
