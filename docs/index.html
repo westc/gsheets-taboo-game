@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Taboo</title>
+    <meta name="description" content="A pass-the-phone Taboo party game.">
+    <meta name="theme-color" content="#4f46e5">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Taboo">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+<div id="app" v-cloak>
+
+    <!-- ================= GAME (full screen, replaces the tabs while playing) ================= -->
+    <section v-if="screen" class="game" :class="'game--' + screen">
+
+        <!-- Turn introduction -->
+        <div v-if="screen === 'turn_intro'" class="game-center">
+            <div class="eyebrow">{{ t('cardsRemaining') }} {{ gameDeck.length }}</div>
+            <div class="avatar-xl">{{ initials(currentPlayer.name) }}</div>
+            <h1 class="game-title">{{ currentPlayer.name }}</h1>
+            <p class="muted">{{ t('passPhone') }} <strong>{{ currentPlayer.name }}</strong>. {{ t('tapWhenReady') }}</p>
+            <div class="game-actions">
+                <button class="btn btn-primary btn-xl" @click="startTurn">
+                    <i class="bi bi-play-fill"></i> {{ t('startTurn') }} ({{ settings.turnDuration }}s)
+                </button>
+                <button class="btn btn-link" @click="confirmEndGame">{{ t('endGame') }}</button>
+            </div>
+        </div>
+
+        <!-- Active gameplay + break (verify) share the header and card -->
+        <template v-if="screen === 'gameplay' || screen === 'break'">
+            <div class="game-header">
+                <div class="game-player"><i class="bi bi-person-fill"></i> {{ currentPlayer.name }}</div>
+                <div class="game-score">{{ formatDelta(turnScoreEarned) }}</div>
+                <div class="game-timer" :class="{ 'is-low': timeLeft <= 10 }"><i class="bi bi-stopwatch"></i> {{ timeLeft }}</div>
+            </div>
+            <div class="timer-bar"><div class="timer-bar-fill" :class="{ 'is-low': timeLeft <= 10 }" :style="{ width: timeFraction * 100 + '%' }"></div></div>
+
+            <div class="taboo-card" :class="{ 'is-dim': screen === 'break' }">
+                <span class="diff-pill" :class="'diff-' + currentCard.difficulty">{{ difficultyName(currentCard.difficulty) }} +{{ currentCard.difficulty }}</span>
+                <div class="target-word">{{ currentCard.word }}</div>
+                <ul class="forbidden-list">
+                    <li v-for="(w, i) in currentCard.taboo" :key="i">{{ w }}</li>
+                </ul>
+            </div>
+
+            <div v-if="screen === 'gameplay'" class="play-buttons">
+                <button class="btn btn-danger" @click="handleCardAction('taboo')"><i class="bi bi-x-octagon"></i>{{ t('tabooBtn') }}</button>
+                <button class="btn btn-warning" @click="handleCardAction('skip')"><i class="bi bi-skip-forward"></i>{{ t('skipBtn') }}</button>
+                <button class="btn btn-success btn-correct" @click="handleCardAction('correct')"><i class="bi bi-check-lg"></i>{{ t('correctBtn') }} (+{{ currentCard.difficulty }})</button>
+            </div>
+
+            <div v-else class="verify-panel">
+                <div class="verify-label">{{ t('verifyAction') }}</div>
+                <span class="result-pill" :class="'result-' + lastAction.action">{{ actionText }}</span>
+                <div v-if="settings.breakDuration > 0" class="muted small">{{ t('breakMessage') }} <strong>{{ breakTimeLeft }}</strong>s…</div>
+                <button class="btn btn-primary btn-lg" @click="proceedFromBreak"><i class="bi bi-arrow-right"></i> {{ t('confirmActionBtn') }}</button>
+                <button class="btn btn-ghost" @click="undoLastAction"><i class="bi bi-arrow-counterclockwise"></i> {{ t('changeActionBtn') }}</button>
+            </div>
+        </template>
+
+        <!-- Turn end -->
+        <div v-if="screen === 'turn_end'" class="game-center">
+            <div class="big-icon text-danger"><i class="bi bi-alarm"></i></div>
+            <h1 class="game-title">{{ t('timesUp') }}</h1>
+            <p class="muted">{{ t('endTurnText') }} <strong>{{ currentPlayer.name }}</strong> · {{ formatDelta(turnScoreEarned) }}</p>
+            <ol class="scoreboard">
+                <li v-for="(p, idx) in players" :key="idx" :class="{ 'is-current': idx === currentPlayerIndex }">
+                    <span class="sb-name">{{ p.name }}</span>
+                    <span v-if="idx === currentPlayerIndex" class="sb-delta">{{ formatDelta(turnScoreEarned) }}</span>
+                    <span class="sb-score">{{ p.score }}</span>
+                </li>
+            </ol>
+            <div class="game-actions">
+                <button class="btn btn-primary btn-xl" @click="advanceToNextPlayer">{{ t('passTo', { name: nextPlayerName }) }} <i class="bi bi-arrow-right"></i></button>
+                <button class="btn btn-link" @click="confirmEndGame">{{ t('endGame') }}</button>
+            </div>
+        </div>
+
+        <!-- Game over -->
+        <div v-if="screen === 'game_over'" class="game-center">
+            <div class="big-icon text-warning"><i class="bi bi-trophy-fill"></i></div>
+            <h1 class="game-title">{{ t('gameOver') }}</h1>
+            <p class="muted">{{ gameOverReason }}</p>
+            <ol class="scoreboard ranked">
+                <li v-for="(p, idx) in sortedPlayers" :key="idx" :class="{ 'is-winner': idx === 0 }">
+                    <span class="sb-rank">#{{ idx + 1 }}</span>
+                    <span class="sb-name">{{ p.name }}</span>
+                    <span class="sb-score">{{ p.score }}</span>
+                </li>
+            </ol>
+            <div class="game-actions">
+                <button class="btn btn-primary btn-xl" @click="startGame"><i class="bi bi-arrow-repeat"></i> {{ t('playAgain') }}</button>
+                <button class="btn btn-link" @click="exitGame">{{ t('backToMenu') }}</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- ================= APP (tabs) ================= -->
+    <template v-else>
+        <header class="topbar">
+            <div class="brand"><span class="brand-mark">T</span>{{ t('gameTitle') }}</div>
+            <button class="account-chip" @click="tab = 'settings'" :title="session ? session.email : t('signIn')">
+                <img v-if="session && session.picture" :src="session.picture" alt="" referrerpolicy="no-referrer">
+                <i v-else class="bi bi-person-circle"></i>
+            </button>
+        </header>
+
+        <div v-if="offline" class="banner"><i class="bi bi-wifi-off"></i> {{ t('offlineNotice') }}</div>
+
+        <main class="content">
+
+            <!-- ---------- PLAY TAB ---------- -->
+            <div v-if="tab === 'play'" class="stack">
+                <section class="panel">
+                    <h2 class="panel-title"><i class="bi bi-collection"></i> {{ t('chooseDeck') }}</h2>
+                    <div v-if="uniqueDecks.length" class="deck-grid">
+                        <button v-for="d in uniqueDecks" :key="d.name" class="deck-tile" :class="{ 'is-selected': settings.deck === d.name }" @click="settings.deck = d.name">
+                            <span class="deck-name">{{ d.name }}</span>
+                            <span class="deck-count">{{ d.count }} {{ t('cards') }}</span>
+                            <i v-if="settings.deck === d.name" class="bi bi-check-circle-fill deck-check"></i>
+                        </button>
+                    </div>
+                    <div v-else class="empty">{{ cardsLoaded ? t('noDecks') : t('loadingMessage') }}</div>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title"><i class="bi bi-people"></i> {{ t('addPlayers') }}</h2>
+                    <form class="input-row" @submit.prevent="addPlayer">
+                        <input type="text" class="input" ref="playerInputRef" :placeholder="t('inputPlaceholder')" v-model="newPlayerName" enterkeyhint="done" autocomplete="off">
+                        <button class="btn btn-primary" type="submit" :aria-label="t('addBtn')"><i class="bi bi-plus-lg"></i></button>
+                    </form>
+                    <ul v-if="players.length" class="player-list">
+                        <li v-for="(p, index) in players" :key="index">
+                            <span class="avatar">{{ initials(p.name) }}</span>
+                            <span class="player-name">{{ p.name }}</span>
+                            <button class="icon-btn" @click="movePlayer(index, -1)" :disabled="index === 0" :aria-label="t('moveUp')"><i class="bi bi-chevron-up"></i></button>
+                            <button class="icon-btn danger" @click="removePlayer(index)" :aria-label="t('deleteBtn')"><i class="bi bi-x-lg"></i></button>
+                        </li>
+                    </ul>
+                    <div v-else class="empty">{{ t('noPlayers') }}</div>
+                </section>
+
+                <button class="rules-summary" @click="tab = 'settings'">
+                    <i class="bi bi-sliders"></i>
+                    <span>{{ rulesSummary }}</span>
+                    <span class="link">{{ t('change') }}</span>
+                </button>
+            </div>
+
+            <!-- ---------- CARDS TAB ---------- -->
+            <div v-if="tab === 'cards'" class="stack">
+                <section v-if="!clientId" class="panel notice">
+                    <i class="bi bi-info-circle"></i> {{ t('editingNotConfigured') }}
+                </section>
+                <section v-else-if="!session" class="panel signin-panel">
+                    <div class="muted">{{ t('signInPrompt') }}</div>
+                    <div class="gsi-button"></div>
+                </section>
+                <section v-else-if="!session.isEditor" class="panel notice warn">
+                    <i class="bi bi-shield-lock"></i>
+                    <div>{{ t('notEditor', { email: session.email }) }}</div>
+                </section>
+
+                <section class="panel">
+                    <div class="deck-picker">
+                        <select class="input" v-model="editorDeck">
+                            <option value="" disabled>{{ t('selectDeckLabel') }}</option>
+                            <option v-for="d in editorDecks" :key="d" :value="d">{{ d }}</option>
+                        </select>
+                        <button v-if="canEdit" class="btn btn-secondary" @click="createDeck"><i class="bi bi-folder-plus"></i> {{ t('newDeckOption') }}</button>
+                    </div>
+                    <div v-if="editorDeck" class="search">
+                        <i class="bi bi-search"></i>
+                        <input type="search" class="input" v-model="searchQuery" :placeholder="t('searchPlaceholder')">
+                    </div>
+                </section>
+
+                <section v-if="editorDeck" class="panel panel-flush">
+                    <div class="list-head">
+                        <span>{{ editorCards.length }} {{ t('cards') }}</span>
+                        <button class="btn btn-link" @click="previewDeck" :disabled="!editorCards.length"><i class="bi bi-play-btn"></i> {{ t('previewDeck') }}</button>
+                    </div>
+                    <ul v-if="editorCards.length" class="card-list">
+                        <li v-for="(card, i) in editorCards" :key="i + ':' + card.word" @click="openCard(card)">
+                            <div class="card-list-main">
+                                <div class="card-list-word">{{ card.word }}</div>
+                                <div class="card-list-taboo">{{ card.taboo.join(' · ') }}</div>
+                            </div>
+                            <span class="diff-dot" :class="'diff-' + card.difficulty">{{ card.difficulty }}</span>
+                            <i class="bi" :class="canEdit ? 'bi-pencil' : 'bi-eye'"></i>
+                        </li>
+                    </ul>
+                    <div v-else class="empty">{{ searchQuery ? t('noMatches') : t('noCards') }}</div>
+                </section>
+
+                <button v-if="canEdit && editorDeck" class="fab" @click="openCard(null)" :aria-label="t('addNewCardTitle')"><i class="bi bi-plus-lg"></i></button>
+            </div>
+
+            <!-- ---------- SETTINGS TAB ---------- -->
+            <div v-if="tab === 'settings'" class="stack">
+                <section class="panel">
+                    <h2 class="panel-title"><i class="bi bi-sliders"></i> {{ t('options') }}</h2>
+
+                    <label class="field-label">{{ t('turnDuration') }}</label>
+                    <div class="segmented">
+                        <button v-for="s in [30, 45, 60, 90, 120]" :key="s" :class="{ active: settings.turnDuration === s }" @click="settings.turnDuration = s">{{ s }}s</button>
+                    </div>
+
+                    <label class="field-label">{{ t('breakDuration') }}</label>
+                    <div class="segmented">
+                        <button :class="{ active: settings.breakDuration === 0 }" @click="settings.breakDuration = 0">{{ t('untilContinue') }}</button>
+                        <button :class="{ active: settings.breakDuration === 3 }" @click="settings.breakDuration = 3">3s</button>
+                        <button :class="{ active: settings.breakDuration === 5 }" @click="settings.breakDuration = 5">5s</button>
+                    </div>
+
+                    <label class="toggle">
+                        <span>{{ t('returnSkipped') }}</span>
+                        <input type="checkbox" v-model="settings.returnSkipped"><span class="switch"></span>
+                    </label>
+                    <label class="toggle">
+                        <span>{{ t('returnTaboo') }}</span>
+                        <input type="checkbox" v-model="settings.returnTaboo"><span class="switch"></span>
+                    </label>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title"><i class="bi bi-translate"></i> {{ t('uiLanguage') }}</h2>
+                    <div class="segmented">
+                        <button :class="{ active: settings.lang === 'en' }" @click="settings.lang = 'en'">English</button>
+                        <button :class="{ active: settings.lang === 'es' }" @click="settings.lang = 'es'">Español</button>
+                        <button :class="{ active: settings.lang === 'pt' }" @click="settings.lang = 'pt'">Português</button>
+                    </div>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title"><i class="bi bi-person-circle"></i> {{ t('account') }}</h2>
+                    <div v-if="session" class="account-row">
+                        <img v-if="session.picture" :src="session.picture" alt="" class="account-pic" referrerpolicy="no-referrer">
+                        <div class="account-info">
+                            <div class="account-name">{{ session.name || session.email }}</div>
+                            <div class="muted small">{{ session.email }}</div>
+                            <span class="role-pill" :class="session.isEditor ? 'is-editor' : ''">{{ session.isEditor ? t('editorBadge') : t('viewerBadge') }}</span>
+                        </div>
+                        <button class="btn btn-secondary" @click="signOut">{{ t('signOut') }}</button>
+                    </div>
+                    <div v-else-if="clientId" class="signin-panel">
+                        <div class="muted">{{ t('signInPrompt') }}</div>
+                        <div class="gsi-button"></div>
+                    </div>
+                    <div v-else class="muted">{{ t('editingNotConfigured') }}</div>
+                </section>
+
+                <section class="panel">
+                    <h2 class="panel-title"><i class="bi bi-cloud-arrow-down"></i> {{ t('data') }}</h2>
+                    <div class="muted small" v-if="cardsUpdatedAt">{{ t('lastUpdated') }}: {{ new Date(cardsUpdatedAt).toLocaleString() }}</div>
+                    <button class="btn btn-secondary btn-block" @click="loadCards(true)"><i class="bi bi-arrow-clockwise"></i> {{ t('refreshCards') }}</button>
+                </section>
+            </div>
+        </main>
+
+        <nav class="tabbar">
+            <button :class="{ active: tab === 'play' }" @click="tab = 'play'"><i class="bi bi-controller"></i><span>{{ t('tabPlay') }}</span></button>
+            <button :class="{ active: tab === 'cards' }" @click="tab = 'cards'"><i class="bi bi-stack"></i><span>{{ t('tabCards') }}</span></button>
+            <button :class="{ active: tab === 'settings' }" @click="tab = 'settings'"><i class="bi bi-gear"></i><span>{{ t('tabSettings') }}</span></button>
+        </nav>
+
+        <!-- Sticky start button on the Play tab -->
+        <div v-if="tab === 'play'" class="start-bar">
+            <button class="btn btn-success btn-xl" @click="startGame" :disabled="!canStart">
+                <i class="bi bi-play-fill"></i> {{ canStart ? t('startBtn') : startHint }}
+            </button>
+        </div>
+    </template>
+
+    <!-- ================= CARD EDITOR SHEET ================= -->
+    <div v-if="cardSheet.show" class="sheet-backdrop" @click.self="closeCardSheet">
+        <div class="sheet" role="dialog" aria-modal="true">
+            <div class="sheet-grabber"></div>
+            <div class="sheet-head">
+                <h3>{{ !canEdit ? cardSheet.word : cardSheet.originalWord ? t('editCardTitle') : t('addNewCardTitle') }}</h3>
+                <button class="icon-btn" @click="closeCardSheet" :aria-label="t('close')"><i class="bi bi-x-lg"></i></button>
+            </div>
+
+            <div v-if="!canEdit" class="sheet-body">
+                <div class="taboo-card taboo-card-sm">
+                    <span class="diff-pill" :class="'diff-' + cardSheet.difficulty">{{ difficultyName(cardSheet.difficulty) }} +{{ cardSheet.difficulty }}</span>
+                    <div class="target-word">{{ cardSheet.word }}</div>
+                    <ul class="forbidden-list"><li v-for="(w, i) in cardSheet.taboo" :key="i">{{ w }}</li></ul>
+                </div>
+            </div>
+
+            <form v-else class="sheet-body" @submit.prevent="saveCard">
+                <div class="muted small">{{ t('deckLabel') }}: <strong>{{ editorDeck }}</strong></div>
+
+                <label class="field-label">{{ t('targetWordLabel') }}</label>
+                <input type="text" class="input input-lg" v-model="cardSheet.word" :placeholder="t('wordPlaceholder')" autocapitalize="characters" autocomplete="off" enterkeyhint="next">
+
+                <label class="field-label">{{ t('difficultyLabel') }}</label>
+                <div class="segmented">
+                    <button type="button" v-for="d in [1, 2, 3]" :key="d" :class="[{ active: cardSheet.difficulty === d }, 'seg-diff-' + d]" @click="cardSheet.difficulty = d">{{ difficultyName(d) }}</button>
+                </div>
+
+                <label class="field-label">{{ t('tabooWordsLabel') }}</label>
+                <div v-for="(w, idx) in cardSheet.taboo" :key="idx" class="input-row">
+                    <input type="text" class="input" v-model="cardSheet.taboo[idx]" :ref="el => { if (el) tabooInputRefs[idx] = el }" :placeholder="t('tabooPlaceholder') + ' ' + (idx + 1)" autocomplete="off" enterkeyhint="next">
+                    <button type="button" class="icon-btn danger" v-if="cardSheet.taboo.length > 1" @click="cardSheet.taboo.splice(idx, 1)" tabindex="-1" :aria-label="t('deleteBtn')"><i class="bi bi-dash-lg"></i></button>
+                </div>
+                <button type="button" class="btn btn-link align-start" v-if="cardSheet.taboo.length < 5" @click="addTabooField"><i class="bi bi-plus-lg"></i> {{ t('addTabooWord') }}</button>
+
+                <div class="sheet-actions">
+                    <button type="submit" class="btn btn-primary btn-lg"><i class="bi bi-check-lg"></i> {{ t('saveCardBtn') }}</button>
+                    <div class="sheet-actions-row">
+                        <button type="button" class="btn btn-secondary" @click="previewDraft"><i class="bi bi-eye"></i> {{ t('previewBtn') }}</button>
+                        <button v-if="cardSheet.originalWord" type="button" class="btn btn-danger-soft" @click="deleteCard"><i class="bi bi-trash"></i> {{ t('deleteBtn') }}</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- ================= PREVIEW (single card or whole deck) ================= -->
+    <div v-if="preview.show" class="sheet-backdrop" @click.self="preview.show = false">
+        <div class="sheet">
+            <div class="sheet-grabber"></div>
+            <div class="sheet-head">
+                <h3>{{ preview.title }}</h3>
+                <button class="icon-btn" @click="preview.show = false" :aria-label="t('close')"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="sheet-body">
+                <div v-if="preview.cards.length > 1" class="muted small center">{{ t('cardOf', { n: preview.index + 1, total: preview.cards.length }) }}</div>
+                <div class="taboo-card taboo-card-sm" @touchstart="onSwipeStart" @touchend="onSwipeEnd">
+                    <span class="diff-pill" :class="'diff-' + previewCard.difficulty">{{ difficultyName(previewCard.difficulty) }} +{{ previewCard.difficulty }}</span>
+                    <div class="target-word">{{ previewCard.word }}</div>
+                    <ul class="forbidden-list"><li v-for="(w, i) in previewCard.taboo" :key="i">{{ w }}</li></ul>
+                </div>
+                <div v-if="preview.cards.length > 1" class="sheet-actions-row">
+                    <button class="btn btn-secondary" @click="stepPreview(-1)"><i class="bi bi-chevron-left"></i> {{ t('prev') }}</button>
+                    <button class="btn btn-secondary" @click="stepPreview(1)">{{ t('next') }} <i class="bi bi-chevron-right"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= DIALOG ================= -->
+    <div v-if="dialog.show" class="dialog-backdrop">
+        <form class="dialog" @submit.prevent="closeDialog(true)">
+            <h3>{{ dialog.title }}</h3>
+            <p v-if="dialog.message">{{ dialog.message }}</p>
+            <input v-if="dialog.type === 'prompt'" type="text" class="input" v-model="dialog.inputValue" ref="dialogInputRef" :placeholder="dialog.placeholder">
+            <div class="dialog-actions">
+                <button type="button" class="btn btn-secondary" v-if="dialog.type !== 'alert'" @click="closeDialog(false)">{{ t('cancel') }}</button>
+                <button type="submit" class="btn" :class="dialog.danger ? 'btn-danger' : 'btn-primary'">{{ dialog.okText || t('ok') }}</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ================= LOADING + TOAST ================= -->
+    <div v-if="busy" class="loading-overlay">
+        <div class="spinner"></div>
+        <strong>{{ busyMessage || t('loadingMessage') }}</strong>
+    </div>
+    <div v-if="toast" class="toast"><i class="bi bi-check-circle-fill"></i> {{ toast }}</div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

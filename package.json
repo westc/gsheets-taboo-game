@@ -1,0 +1,12 @@
+{
+  "name": "gsheets-taboo",
+  "private": true,
+  "description": "Taboo PWA (GitHub Pages) with a Google Sheets / Apps Script backend",
+  "scripts": {
+    "gas:pull": "clasp pull",
+    "gas:push": "clasp push",
+    "gas:deploy": "clasp push && clasp deploy --deploymentId AKfycbyWeC-C1PzMLTT_-5LRob91QqD95n-cvODbpwhJk47DimcP2UW3BN65o4wwLMN9xGkx --description \"Deployed from repo\"",
+    "gas:open": "clasp open",
+    "serve": "python3 -m http.server 8000 -d docs"
+  }
+}
